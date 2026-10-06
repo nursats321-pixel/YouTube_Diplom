@@ -12,7 +12,6 @@ def get_video_info(url: str):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "cookiesfrombrowser": ("chrome",),
     }
 
     with yt_dlp.YoutubeDL(options) as ydl:
@@ -99,7 +98,6 @@ def download_video(
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "cookiesfrombrowser": ("chrome",),
     }) as ydl:
 
         info = ydl.extract_info(
@@ -286,10 +284,6 @@ def download_video(
         "no_warnings": True,
 
         "noplaylist": True,
-
-        "cookiesfrombrowser": (
-            "chrome",
-        ),
 
         "format": format_string,
 
