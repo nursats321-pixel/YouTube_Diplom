@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>YouTube Downloader</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', path='css/style.css') }}"
+    >
+</head>
+
+<body>
+
+    <div class="app">
+
+        <header class="header">
+
+            <div class="logo">
+                <div class="logo-icon">
+                    ↓
+                </div>
+
+                <div>
+                    <h1>YouTube Downloader</h1>
+                </div>
+            </div>
+
+        </header>
+
+
+        <main class="main">
+
+            <section class="hero">
+
+                <h2>
+                    Скачивание видео<br>
+                    <span>с YouTube</span>
+                </h2>
+
+                <p class="hero-description">
+                    Вставьте ссылку на видео или Shorts и выберите качество.
+                </p>
+
+            </section>
+
+
+            <section class="downloader-card">
+
+                <div class="input-label">
+                    YouTube URL
+                </div>
+
+                <div class="url-row">
+
+            <input
+                type="text"
+                id="url"
+                placeholder="https://youtube.com/watch?v=..."
+                autocomplete="off"
+            >
+
+            <button id="clear-url" type="button">
+                    Очистить
+            </button>
+
+            <button id="download" type="button">
+                    Получить
+            </button>
+
+        </div>
+
+                <p class="input-hint">
+                    Поддерживаются обычные видео и Shorts
+                </p>
+                <div id="result"></div>
+
+            </section>
+        </main>
+
+    </div>
+
+
+    <script
+        src="{{ url_for('static', path='js/app.js') }}"
+    ></script>
+
+</body>
+</html>
