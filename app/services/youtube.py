@@ -6,13 +6,28 @@ import yt_dlp
 DOWNLOAD_DIR = "downloads"
 
 
-def get_video_info(url: str):
-
+def ydl_options():
+    """Build yt-dlp options, using an optional cookies file on the server."""
     options = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
     }
+
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    if cookies_file:
+        if not os.path.isfile(cookies_file):
+            raise FileNotFoundError(
+                "Файл cookies из YTDLP_COOKIES_FILE не найден"
+            )
+        options["cookiefile"] = cookies_file
+
+    return options
+
+
+def get_video_info(url: str):
+
+    options = ydl_options()
 
     with yt_dlp.YoutubeDL(options) as ydl:
 
@@ -94,11 +109,7 @@ def download_video(
         exist_ok=True,
     )
 
-    with yt_dlp.YoutubeDL({
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-    }) as ydl:
+    with yt_dlp.YoutubeDL(ydl_options()) as ydl:
 
         info = ydl.extract_info(
             url,
@@ -277,13 +288,7 @@ def download_video(
         f"{format_id}"
     )
 
-    options = {
-
-        "quiet": True,
-
-        "no_warnings": True,
-
-        "noplaylist": True,
+    options = ydl_options() | {
 
         "format": format_string,
 
