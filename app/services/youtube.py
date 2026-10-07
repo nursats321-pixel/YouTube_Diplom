@@ -1,9 +1,33 @@
 import os
+import shutil
+import tempfile
+import threading
 
 import yt_dlp
 
 
 DOWNLOAD_DIR = "downloads"
+_cookies_copy_path = None
+_cookies_source_mtime = None
+_cookies_lock = threading.Lock()
+
+
+def writable_cookies_file(source_path: str):
+    """Copy Render's read-only secret file to a private writable temp file."""
+    global _cookies_copy_path, _cookies_source_mtime
+
+    source_mtime = os.stat(source_path).st_mtime_ns
+    with _cookies_lock:
+        if _cookies_copy_path is None or _cookies_source_mtime != source_mtime:
+            _cookies_copy_path = os.path.join(
+                tempfile.gettempdir(),
+                f"youtube-cookies-{os.getpid()}.txt",
+            )
+            shutil.copyfile(source_path, _cookies_copy_path)
+            os.chmod(_cookies_copy_path, 0o600)
+            _cookies_source_mtime = source_mtime
+
+    return _cookies_copy_path
 
 
 def ydl_options():
@@ -20,7 +44,7 @@ def ydl_options():
             raise FileNotFoundError(
                 "Файл cookies из YTDLP_COOKIES_FILE не найден"
             )
-        options["cookiefile"] = cookies_file
+        options["cookiefile"] = writable_cookies_file(cookies_file)
 
     return options
 
