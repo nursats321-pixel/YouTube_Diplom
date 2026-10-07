@@ -2,94 +2,94 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Downloader</title>
-
-    <link
-        rel="stylesheet"
-        href="{{ url_for('static', path='css/style.css') }}"
-    >
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
 </head>
-
 <body>
-
     <div class="app">
-
         <header class="header">
-
             <div class="logo">
-                <div class="logo-icon">
-                    ↓
-                </div>
-
-                <div>
-                    <h1>YouTube Downloader</h1>
-                </div>
+                <div class="logo-icon">↓</div>
+                <h1>YouTube Downloader</h1>
             </div>
-
         </header>
 
-
         <main class="main">
-
             <section class="hero">
-
-                <h2>
-                    Скачивание видео<br>
-                    <span>с YouTube</span>
-                </h2>
-
+                <h2>Скачивание видео<br><span>с YouTube</span></h2>
                 <p class="hero-description">
                     Вставьте ссылку на видео или Shorts и выберите качество.
                 </p>
-
             </section>
-
 
             <section class="downloader-card">
+                <form action="/video" method="post">
+                    <label class="input-label" for="url">YouTube URL</label>
+                    <div class="url-row">
+                        <input
+                            id="url"
+                            name="url"
+                            type="url"
+                            value="{{ url or '' }}"
+                            placeholder="https://youtube.com/watch?v=..."
+                            required
+                        >
+                        <a id="clear-url" href="/">Очистить</a>
+                        <button id="download" type="submit">Получить</button>
+                    </div>
+                </form>
+                <p class="input-hint">Поддерживаются обычные видео и Shorts</p>
 
-                <div class="input-label">
-                    YouTube URL
+                {% if error %}
+                <div class="error-message">
+                    <strong>Ошибка</strong>
+                    <p>{{ error }}</p>
                 </div>
+                {% endif %}
 
-                <div class="url-row">
+                {% if task_id %}
+                <div class="progress-container" data-task-id="{{ task_id }}">
+                    <div class="progress-text">
+                        <span id="progress-percent">0%</span>
+                        <span id="progress-status">Подготовка скачивания...</span>
+                    </div>
+                    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+                    <div class="download-details" id="download-details"></div>
+                </div>
+                {% endif %}
 
-            <input
-                type="text"
-                id="url"
-                placeholder="https://youtube.com/watch?v=..."
-                autocomplete="off"
-            >
-
-            <button id="clear-url" type="button">
-                    Очистить
-            </button>
-
-            <button id="download" type="button">
-                    Получить
-            </button>
-
-        </div>
-
-                <p class="input-hint">
-                    Поддерживаются обычные видео и Shorts
-                </p>
-                <div id="result"></div>
-
+                {% if video %}
+                <div class="video-card">
+                    <div class="video-preview">
+                        <img src="{{ video.thumbnail or '' }}" alt="Превью видео">
+                    </div>
+                    <div class="video-info">
+                        <h3>{{ video.title or 'Без названия' }}</h3>
+                        <p class="video-author"><strong>Автор:</strong> {{ video.uploader or 'Неизвестно' }}</p>
+                        <form action="/download" method="post">
+                            <input type="hidden" name="url" value="{{ url }}">
+                            <div class="quality-container">
+                                <label for="quality">Качество видео</label>
+                                <select id="quality" name="format_id">
+                                    {% for format in video.qualities %}
+                                    <option
+                                        value="{{ format.format_id }}"
+                                        {% if selected_format_id and format.format_id|string == selected_format_id|string %}selected{% endif %}
+                                    >
+                                        {{ format.height }}p
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button class="download-video" type="submit">Скачать видео</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
             </section>
         </main>
-
     </div>
-
-
-    <script
-        src="{{ url_for('static', path='js/app.js') }}"
-    ></script>
-
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
 </body>
 </html>

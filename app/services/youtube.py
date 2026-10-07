@@ -294,6 +294,8 @@ def download_video(
 
         "merge_output_format": "mp4",
 
+        "concurrent_fragment_downloads": 8,
+
         "outtmpl": output_path,
 
         "overwrites": False,

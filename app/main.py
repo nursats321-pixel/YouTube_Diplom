@@ -1,15 +1,23 @@
 import asyncio
+import json
 import os
 import uuid
 
-from fastapi import FastAPI, Request, HTTPException, WebSocket
-from fastapi.responses import FileResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.templating import Jinja2Templates
+from redis import Redis
 
-from app.services.youtube import get_video_info, download_video
+from app.services.youtube import download_video, get_video_info
 
+
+DOWNLOAD_DIR = "downloads"
+TASK_TTL_SECONDS = 60 * 60
+redis_client = Redis.from_url(
+    os.getenv("REDIS_URL", "redis://localhost:6379"),
+    decode_responses=True,
+)
 
 app = FastAPI(
     title="YouTube Downloader",
@@ -17,109 +25,116 @@ app = FastAPI(
     version="1.0.0",
 )
 
-templates = Jinja2Templates(
-    directory="app/templates"
-)
-
-app.mount(
-    "/static",
-    StaticFiles(directory="app/static"),
-    name="static",
-)
+templates = Jinja2Templates(directory="app/templates")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
-class VideoRequest(BaseModel):
-    url: str
-    height: int = 720
-    format_id: str | None = None
+def page(request: Request, **context):
+    return templates.TemplateResponse(request, "index.html", context)
 
 
-download_tasks = {}
+def task_key(task_id: str):
+    return f"youtube-download:{task_id}"
+
+
+def save_task(task_id: str, **data):
+    values = {key: str(value) for key, value in data.items() if value is not None}
+    redis_client.hset(task_key(task_id), mapping=values)
+    redis_client.expire(task_key(task_id), TASK_TTL_SECONDS)
 
 
 @app.get("/")
 async def home(request: Request):
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-    )
+    return page(request)
 
 
 @app.get("/api/health")
 async def health_check():
-    return {
-        "status": "ok",
-        "service": "YouTube Downloader",
-    }
+    return {"status": "ok", "service": "YouTube Downloader"}
 
 
-@app.post("/api/youtube/info")
-async def youtube_info(data: VideoRequest):
+@app.post("/video")
+async def video_info(request: Request, url: str = Form(...)):
+    url = url.strip()
+    if not url:
+        return page(request, error="Введите ссылку на YouTube.")
+
     try:
-        info = get_video_info(data.url)
+        video = await asyncio.to_thread(get_video_info, url)
+    except Exception as error:
+        return page(request, error=str(error), url=url)
 
-        return {
-            "success": True,
-            "video": info,
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
+    if not video["qualities"]:
+        return page(
+            request,
+            error="Для этого видео не удалось определить доступные качества.",
+            url=url,
         )
 
-
-@app.post("/api/youtube/download")
-async def youtube_download(data: VideoRequest):
-
-    if not data.format_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Не выбран формат видео",
-        )
-
-    task_id = str(uuid.uuid4())
-
-    download_tasks[task_id] = {
-        "status": "starting",
-        "progress": 0,
-        "speed": "",
-        "eta": "",
-        "filename": None,
-        "title": None,
-        "height": data.height,
-        "format_id": data.format_id,
-        "error": None,
-    }
-
-    asyncio.create_task(
-        run_download(
-            task_id,
-            data.url,
-            data.height,
-            data.format_id,
-        )
-    )
-
-    return {
-        "success": True,
-        "task_id": task_id,
-    }
+    return page(request, video=video, url=url)
 
 
-async def run_download(
-    task_id: str,
-    url: str,
-    height: int,
-    format_id: str,
+@app.post("/download")
+async def start_download(
+    request: Request,
+    url: str = Form(...),
+    format_id: str = Form(...),
 ):
     try:
+        video = await asyncio.to_thread(get_video_info, url)
+        selected_format = next(
+            (
+                item for item in video["qualities"]
+                if str(item["format_id"]) == format_id
+            ),
+            None,
+        )
+        if selected_format is None:
+            return page(request, error="Выбранное качество недоступно.", url=url)
 
-        download_tasks[task_id]["status"] = "downloading"
+        task_id = str(uuid.uuid4())
+        save_task(
+            task_id,
+            status="starting",
+            progress=0,
+            title=video["title"],
+            height=selected_format["height"],
+            format_id=format_id,
+            url=url,
+            video=json.dumps(video),
+        )
+        asyncio.create_task(
+            run_download(task_id, url, selected_format["height"], format_id)
+        )
+    except Exception as error:
+        return page(request, error=str(error), url=url)
+
+    return RedirectResponse(url=f"/download/{task_id}", status_code=303)
+
+
+@app.get("/download/{task_id}")
+async def download_page(request: Request, task_id: str):
+    task = redis_client.hgetall(task_key(task_id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+
+    video_json = task.get("video")
+    video = json.loads(video_json) if video_json else None
+    return page(
+        request,
+        task_id=task_id,
+        url=task.get("url", ""),
+        video=video,
+        selected_format_id=task.get("format_id"),
+    )
+
+
+async def run_download(task_id: str, url: str, height: int, format_id: str):
+    try:
+        save_task(task_id, status="downloading", progress=0)
 
         def progress_callback(data):
-            download_tasks[task_id].update(data)
+            save_task(task_id, **data)
 
         result = await asyncio.to_thread(
             download_video,
@@ -128,86 +143,35 @@ async def run_download(
             format_id,
             progress_callback,
         )
-
-        download_tasks[task_id].update({
-            "status": "completed",
-            "progress": 100,
-            "speed": "",
-            "eta": "",
-            "filename": result["filename"],
-            "title": result["title"],
-            "height": result["height"],
-            "format_id": format_id,
-        })
-
-    except Exception as e:
-
-        download_tasks[task_id].update({
-            "status": "error",
-            "error": str(e),
-        })
-
-
-@app.websocket("/ws/download/{task_id}")
-async def download_progress(
-    websocket: WebSocket,
-    task_id: str,
-):
-    await websocket.accept()
-
-    try:
-
-        while True:
-
-            task = download_tasks.get(task_id)
-
-            if task is None:
-
-                await websocket.send_json({
-                    "status": "error",
-                    "error": "Задача не найдена",
-                })
-
-                break
-
-            await websocket.send_json(task)
-
-            if task["status"] in (
-                "completed",
-                "error",
-            ):
-                break
-
-            await asyncio.sleep(0.5)
-
-    except Exception:
-        pass
-
-    finally:
-
-        try:
-            await websocket.close()
-        except Exception:
-            pass
-
-
-@app.get("/api/youtube/file/{filename}")
-async def youtube_file(filename: str):
-
-    file_path = os.path.join(
-        "downloads",
-        filename,
-    )
-
-    if not os.path.exists(file_path):
-
-        raise HTTPException(
-            status_code=404,
-            detail="Файл не найден",
+        save_task(
+            task_id,
+            status="completed",
+            progress=100,
+            filename=result["filename"],
+            title=result["title"],
+            height=result["height"],
         )
+    except Exception as error:
+        save_task(task_id, status="error", error=str(error))
 
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type="video/mp4",
-    )
+
+@app.get("/api/download-status/{task_id}")
+async def download_status(task_id: str):
+    task = redis_client.hgetall(task_key(task_id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return task
+
+
+@app.get("/download/file/{task_id}")
+async def download_file(task_id: str):
+    task = redis_client.hgetall(task_key(task_id))
+    filename = task.get("filename")
+    if task.get("status") != "completed" or not filename:
+        raise HTTPException(status_code=404, detail="Файл ещё не готов")
+
+    file_path = os.path.join(DOWNLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Готовый файл не найден")
+
+    return FileResponse(path=file_path, filename=filename, media_type="video/mp4")
