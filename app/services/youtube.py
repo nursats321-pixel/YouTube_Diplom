@@ -1,84 +1,27 @@
 import os
-import shutil
-import tempfile
-import threading
 
 import yt_dlp
 
 
 DOWNLOAD_DIR = "downloads"
 
-_cookies_copy_path = None
-_cookies_source_mtime = None
-_cookies_lock = threading.Lock()
-
-
-def writable_cookies_file(source_path: str):
-    global _cookies_copy_path
-    global _cookies_source_mtime
-
-    source_mtime = os.stat(
-        source_path
-    ).st_mtime_ns
-
-    with _cookies_lock:
-        if (
-            _cookies_copy_path is None
-            or _cookies_source_mtime != source_mtime
-            or not os.path.exists(_cookies_copy_path)
-        ):
-            _cookies_copy_path = os.path.join(
-                tempfile.gettempdir(),
-                f"youtube-cookies-{os.getpid()}.txt",
-            )
-
-            shutil.copyfile(
-                source_path,
-                _cookies_copy_path,
-            )
-
-            os.chmod(
-                _cookies_copy_path,
-                0o600,
-            )
-
-            _cookies_source_mtime = source_mtime
-
-    return _cookies_copy_path
-
 
 def ydl_options():
-    options = {
+    return {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "js_runtimes": {
+            "node": {}
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": [
+                    "android_vr"
+                ]
+            }
+        },
     }
-
-    cookies_file = os.getenv(
-        "YTDLP_COOKIES_FILE"
-    )
-
-    if cookies_file:
-        exists = os.path.isfile(
-            cookies_file
-        )
-
-        print(
-            f"YouTube cookies: {cookies_file}, exists={exists}"
-        )
-
-        if not exists:
-            raise FileNotFoundError(
-                "Файл cookies из YTDLP_COOKIES_FILE не найден"
-            )
-
-        cookies_copy = writable_cookies_file(
-            cookies_file
-        )
-
-        options["cookiefile"] = cookies_copy
-
-    return options
 
 
 def get_video_info(url: str):
@@ -119,10 +62,10 @@ def get_video_info(url: str):
         if not format_id:
             continue
 
-        if not height:
+        if not width:
             continue
 
-        if not width:
+        if not height:
             continue
 
         if not vcodec:
@@ -149,10 +92,10 @@ def get_video_info(url: str):
     unique_formats = {}
 
     for fmt in formats:
-        quality = fmt["height"]
+        height = fmt["height"]
 
-        if quality not in unique_formats:
-            unique_formats[quality] = fmt
+        if height not in unique_formats:
+            unique_formats[height] = fmt
 
     qualities = sorted(
         unique_formats.values(),
@@ -162,10 +105,19 @@ def get_video_info(url: str):
 
     return {
         "id": info.get("id"),
-        "title": info.get("title"),
-        "thumbnail": info.get("thumbnail"),
-        "duration": info.get("duration"),
-        "uploader": info.get("uploader"),
+        "title": (
+            info.get("title")
+            or "YouTube video"
+        ),
+        "thumbnail": info.get(
+            "thumbnail"
+        ),
+        "duration": info.get(
+            "duration"
+        ),
+        "uploader": info.get(
+            "uploader"
+        ),
         "webpage_url": info.get(
             "webpage_url"
         ),
@@ -259,9 +211,9 @@ def download_video(
             f"Качество {height}p недоступно"
         )
 
-    selected_format_id = selected_format[
-        "format_id"
-    ]
+    selected_format_id = (
+        selected_format["format_id"]
+    )
 
     filename = (
         f"{video_id}_{height}p.mp4"
@@ -301,8 +253,12 @@ def download_video(
             )
 
             total = (
-                data.get("total_bytes")
-                or data.get("total_bytes_estimate")
+                data.get(
+                    "total_bytes"
+                )
+                or data.get(
+                    "total_bytes_estimate"
+                )
                 or 0
             )
 
