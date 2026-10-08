@@ -7,54 +7,84 @@ import yt_dlp
 
 
 DOWNLOAD_DIR = "downloads"
+
 _cookies_copy_path = None
 _cookies_source_mtime = None
 _cookies_lock = threading.Lock()
 
 
 def writable_cookies_file(source_path: str):
-    """Copy Render's read-only secret file to a private writable temp file."""
-    global _cookies_copy_path, _cookies_source_mtime
+    global _cookies_copy_path
+    global _cookies_source_mtime
 
-    source_mtime = os.stat(source_path).st_mtime_ns
+    source_mtime = os.stat(
+        source_path
+    ).st_mtime_ns
+
     with _cookies_lock:
-        if _cookies_copy_path is None or _cookies_source_mtime != source_mtime:
+        if (
+            _cookies_copy_path is None
+            or _cookies_source_mtime != source_mtime
+            or not os.path.exists(_cookies_copy_path)
+        ):
             _cookies_copy_path = os.path.join(
                 tempfile.gettempdir(),
                 f"youtube-cookies-{os.getpid()}.txt",
             )
-            shutil.copyfile(source_path, _cookies_copy_path)
-            os.chmod(_cookies_copy_path, 0o600)
+
+            shutil.copyfile(
+                source_path,
+                _cookies_copy_path,
+            )
+
+            os.chmod(
+                _cookies_copy_path,
+                0o600,
+            )
+
             _cookies_source_mtime = source_mtime
 
     return _cookies_copy_path
 
 
 def ydl_options():
-    """Build yt-dlp options, using an optional cookies file on the server."""
     options = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
     }
 
-    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    cookies_file = os.getenv(
+        "YTDLP_COOKIES_FILE"
+    )
+
     if cookies_file:
-        if not os.path.isfile(cookies_file):
+        exists = os.path.isfile(
+            cookies_file
+        )
+
+        print(
+            f"YouTube cookies: {cookies_file}, exists={exists}"
+        )
+
+        if not exists:
             raise FileNotFoundError(
                 "Файл cookies из YTDLP_COOKIES_FILE не найден"
             )
-        options["cookiefile"] = writable_cookies_file(cookies_file)
+
+        cookies_copy = writable_cookies_file(
+            cookies_file
+        )
+
+        options["cookiefile"] = cookies_copy
 
     return options
 
 
 def get_video_info(url: str):
-
     options = ydl_options()
 
     with yt_dlp.YoutubeDL(options) as ydl:
-
         info = ydl.extract_info(
             url,
             download=False,
@@ -62,17 +92,37 @@ def get_video_info(url: str):
 
     formats = []
 
-    for fmt in info.get("formats", []):
+    for fmt in info.get(
+        "formats",
+        [],
+    ):
+        format_id = fmt.get(
+            "format_id"
+        )
 
-        height = fmt.get("height")
-        width = fmt.get("width")
-        vcodec = fmt.get("vcodec")
-        format_id = fmt.get("format_id")
+        width = fmt.get(
+            "width"
+        )
+
+        height = fmt.get(
+            "height"
+        )
+
+        vcodec = fmt.get(
+            "vcodec"
+        )
+
+        acodec = fmt.get(
+            "acodec"
+        )
+
+        if not format_id:
+            continue
 
         if not height:
             continue
 
-        if not format_id:
+        if not width:
             continue
 
         if not vcodec:
@@ -81,28 +131,28 @@ def get_video_info(url: str):
         if vcodec == "none":
             continue
 
-        if not vcodec.startswith("avc1"):
+        if not vcodec.startswith(
+            "avc1"
+        ):
             continue
 
         formats.append({
             "format_id": format_id,
-            "height": height,
-            "width": width,
+            "height": int(height),
+            "width": int(width),
             "fps": fmt.get("fps"),
             "ext": fmt.get("ext"),
             "vcodec": vcodec,
-            "acodec": fmt.get("acodec"),
+            "acodec": acodec,
         })
 
     unique_formats = {}
 
     for fmt in formats:
+        quality = fmt["height"]
 
-        height = fmt["height"]
-
-        if height not in unique_formats:
-
-            unique_formats[height] = fmt
+        if quality not in unique_formats:
+            unique_formats[quality] = fmt
 
     qualities = sorted(
         unique_formats.values(),
@@ -116,7 +166,9 @@ def get_video_info(url: str):
         "thumbnail": info.get("thumbnail"),
         "duration": info.get("duration"),
         "uploader": info.get("uploader"),
-        "webpage_url": info.get("webpage_url"),
+        "webpage_url": info.get(
+            "webpage_url"
+        ),
         "qualities": qualities,
     }
 
@@ -124,43 +176,69 @@ def get_video_info(url: str):
 def download_video(
     url: str,
     height: int,
-    format_id: str,
+    format_id=None,
     progress_callback=None,
 ):
-
     os.makedirs(
         DOWNLOAD_DIR,
         exist_ok=True,
     )
 
-    with yt_dlp.YoutubeDL(ydl_options()) as ydl:
+    options = ydl_options()
 
+    with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(
             url,
             download=False,
         )
 
-    video_id = info.get("id")
-    title = info.get("title")
+    video_id = info.get(
+        "id"
+    )
+
+    title = (
+        info.get("title")
+        or "YouTube video"
+    )
 
     if not video_id:
         raise ValueError(
             "Не удалось определить ID видео"
         )
 
-    if not format_id:
-        raise ValueError(
-            "Не выбран формат видео"
-        )
-
     selected_format = None
 
-    for fmt in info.get("formats", []):
+    for fmt in info.get(
+        "formats",
+        [],
+    ):
+        fmt_height = fmt.get(
+            "height"
+        )
 
-        if str(fmt.get("format_id")) != str(format_id):
+        fmt_width = fmt.get(
+            "width"
+        )
+
+        fmt_id = fmt.get(
+            "format_id"
+        )
+
+        vcodec = fmt.get(
+            "vcodec"
+        )
+
+        if not fmt_height:
             continue
 
-        vcodec = fmt.get("vcodec")
+        if not fmt_width:
+            continue
+
+        if not fmt_id:
+            continue
+
+        if int(fmt_height) != int(height):
+            continue
 
         if not vcodec:
             continue
@@ -168,28 +246,22 @@ def download_video(
         if vcodec == "none":
             continue
 
-        if not vcodec.startswith("avc1"):
+        if not vcodec.startswith(
+            "avc1"
+        ):
             continue
 
         selected_format = fmt
-
         break
 
     if selected_format is None:
         raise ValueError(
-            f"Формат {format_id} недоступен"
+            f"Качество {height}p недоступно"
         )
 
-    real_height = selected_format.get(
-        "height"
-    )
-
-    if real_height != height:
-        raise ValueError(
-            f"Формат {format_id} имеет "
-            f"разрешение {real_height}p, "
-            f"а выбран параметр {height}p"
-        )
+    selected_format_id = selected_format[
+        "format_id"
+    ]
 
     filename = (
         f"{video_id}_{height}p.mp4"
@@ -200,10 +272,10 @@ def download_video(
         filename,
     )
 
-    if os.path.exists(output_path):
-
+    if os.path.exists(
+        output_path
+    ):
         if progress_callback:
-
             progress_callback({
                 "status": "completed",
                 "progress": 100,
@@ -222,9 +294,7 @@ def download_video(
         }
 
     def progress_hook(data):
-
         if data["status"] == "downloading":
-
             downloaded = data.get(
                 "downloaded_bytes",
                 0,
@@ -237,54 +307,46 @@ def download_video(
             )
 
             if total:
-
                 progress = (
                     downloaded / total
                 ) * 100
-
             else:
-
                 progress = 0
 
-            speed = data.get("speed")
-            eta = data.get("eta")
+            speed = data.get(
+                "speed"
+            )
 
             if speed:
-
                 speed_text = (
                     f"{speed / 1024 / 1024:.2f} MB/s"
                 )
-
             else:
-
                 speed_text = ""
 
-            if eta is not None:
+            eta = data.get(
+                "eta"
+            )
 
+            if eta is not None:
                 minutes, seconds = divmod(
                     eta,
                     60,
                 )
 
                 if minutes:
-
                     eta_text = (
                         f"{int(minutes)} мин "
                         f"{int(seconds)} сек"
                     )
-
                 else:
-
                     eta_text = (
                         f"{int(seconds)} сек"
                     )
-
             else:
-
                 eta_text = ""
 
             if progress_callback:
-
                 progress_callback({
                     "status": "downloading",
                     "progress": round(
@@ -296,9 +358,7 @@ def download_video(
                 })
 
         elif data["status"] == "finished":
-
             if progress_callback:
-
                 progress_callback({
                     "status": "processing",
                     "progress": 100,
@@ -306,44 +366,41 @@ def download_video(
                     "eta": "",
                 })
 
-    format_string = (
-        f"{format_id}+bestaudio[acodec^=mp4a]/"
-        f"{format_id}+bestaudio/"
-        f"{format_id}"
-    )
+    download_options = ydl_options()
 
-    options = ydl_options() | {
-
-        "format": format_string,
-
+    download_options.update({
+        "format": (
+            f"{selected_format_id}+"
+            "bestaudio[acodec^=mp4a]/"
+            f"{selected_format_id}+"
+            "bestaudio/"
+            f"{selected_format_id}"
+        ),
         "merge_output_format": "mp4",
-
         "concurrent_fragment_downloads": 8,
-
         "outtmpl": output_path,
-
         "overwrites": False,
-
         "progress_hooks": [
             progress_hook
         ],
-    }
+    })
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-
+    with yt_dlp.YoutubeDL(
+        download_options
+    ) as ydl:
         ydl.extract_info(
             url,
             download=True,
         )
 
-    if not os.path.exists(output_path):
-
+    if not os.path.exists(
+        output_path
+    ):
         raise FileNotFoundError(
             "Готовый MP4 файл не найден"
         )
 
     if progress_callback:
-
         progress_callback({
             "status": "completed",
             "progress": 100,
