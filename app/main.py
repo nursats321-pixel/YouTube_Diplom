@@ -1,36 +1,156 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import sqlite3
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from contextlib import contextmanager
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from redis import Redis
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.services.youtube import download_video, get_video_info
 
 
-DOWNLOAD_DIR = "downloads"
+BASE_DIR = Path(__file__).resolve().parent.parent
+DOWNLOAD_DIR = str(BASE_DIR / "downloads")
+DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "media_downloader.db"))
+SECRET_PATH = BASE_DIR / ".secret_key"
 TASK_TTL_SECONDS = 60 * 60
+
+# Keep a stable random session key for local development; deployments should set SECRET_KEY.
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if SECRET_PATH.exists():
+        SECRET_KEY = SECRET_PATH.read_text(encoding="utf-8").strip()
+    else:
+        SECRET_KEY = secrets.token_urlsafe(48)
+        SECRET_PATH.write_text(SECRET_KEY, encoding="utf-8")
+        try:
+            SECRET_PATH.chmod(0o600)
+        except OSError:
+            pass
+
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
 redis_client = Redis.from_url(
     os.getenv("REDIS_URL", "redis://localhost:6379"),
     decode_responses=True,
 )
 
 app = FastAPI(
-    title="YouTube Downloader",
+    title="Media Downloader",
     description="YouTube video downloader",
-    version="1.0.0",
+    version="1.1.0",
+)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    session_cookie="media_downloader_session",
+    same_site="lax",
+    https_only=False,
 )
 
-templates = Jinja2Templates(directory="app/templates")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
 
 
-def page(request: Request, **context):
-    return templates.TemplateResponse(request, "index.html", context)
+@contextmanager
+def get_db():
+    connection = sqlite3.connect(DATABASE_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def init_db():
+    with get_db() as db:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS download_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                video_id TEXT,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                thumbnail TEXT,
+                uploader TEXT,
+                quality INTEGER NOT NULL,
+                format_id TEXT,
+                filename TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )"""
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_user_date "
+            "ON download_history(user_id, created_at DESC)"
+        )
+
+
+init_db()
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    derived = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+    return f"{salt.hex()}:{derived.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, expected_hex = stored_hash.split(":", 1)
+        actual = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=bytes.fromhex(salt_hex),
+            n=2**14,
+            r=8,
+            p=1,
+        )
+        return hmac.compare_digest(actual.hex(), expected_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+def current_user(request: Request):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return None
+    with get_db() as db:
+        user = db.execute(
+            "SELECT id, username FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    if not user:
+        request.session.clear()
+        return None
+    return dict(user)
+
+
+def page(request: Request, template_name="index.html", **context):
+    context.setdefault("current_user", current_user(request))
+    return templates.TemplateResponse(request, template_name, context)
 
 
 def task_key(task_id: str):
@@ -43,81 +163,168 @@ def save_task(task_id: str, **data):
     redis_client.expire(task_key(task_id), TASK_TTL_SECONDS)
 
 
+def require_user(request: Request):
+    user = current_user(request)
+    if not user:
+        return None
+    return user
+
+
+def owned_task(request: Request, task_id: str):
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Сначала войдите в аккаунт")
+    task = redis_client.hgetall(task_key(task_id))
+    if not task or task.get("user_id") != str(user["id"]):
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return task
+
+
+async def create_download_task(user_id: int, url: str, format_id: str, video=None):
+    if video is None:
+        video = await asyncio.to_thread(get_video_info, url)
+    selected_format = next(
+        (item for item in video["qualities"] if str(item["format_id"]) == str(format_id)),
+        None,
+    )
+    if selected_format is None:
+        raise ValueError("Выбранное качество недоступно.")
+
+    task_id = str(uuid.uuid4())
+    save_task(
+        task_id,
+        user_id=user_id,
+        status="starting",
+        progress=0,
+        title=video["title"],
+        height=selected_format["height"],
+        format_id=format_id,
+        url=url,
+        video=json.dumps(video),
+    )
+    asyncio.create_task(
+        run_download(task_id, user_id, url, video, selected_format["height"], format_id)
+    )
+    return task_id
+
+
 @app.get("/")
 async def home(request: Request):
+    if not current_user(request):
+        return RedirectResponse(url="/login", status_code=303)
     return page(request)
 
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "YouTube Downloader"}
+    return {"status": "ok", "service": "Media Downloader"}
+
+
+@app.get("/register")
+async def register_page(request: Request):
+    if current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return page(request, "register.html")
+
+
+@app.post("/register")
+async def register(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+):
+    username = username.strip()
+    if len(username) < 3 or len(username) > 32:
+        return page(request, "register.html", error="Логин должен содержать от 3 до 32 символов.", username=username)
+    if not all(char.isalnum() or char in "_-" for char in username):
+        return page(request, "register.html", error="Используй только буквы, цифры, дефис и нижнее подчёркивание.", username=username)
+    if len(password) < 8:
+        return page(request, "register.html", error="Пароль должен содержать минимум 8 символов.", username=username)
+    if password != password_confirm:
+        return page(request, "register.html", error="Пароли не совпадают.", username=username)
+
+    try:
+        with get_db() as db:
+            cursor = db.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                (username, hash_password(password), datetime.now(timezone.utc).isoformat()),
+            )
+            user_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        return page(request, "register.html", error="Такой логин уже занят.", username=username)
+
+    request.session.clear()
+    request.session["user_id"] = user_id
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    if current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return page(request, "login.html")
+
+
+@app.post("/login")
+async def login(request: Request, username: str = Form(...), password: str = Form(...)):
+    with get_db() as db:
+        user = db.execute(
+            "SELECT id, username, password_hash FROM users WHERE username = ? COLLATE NOCASE",
+            (username.strip(),),
+        ).fetchone()
+    if not user or not verify_password(password, user["password_hash"]):
+        return page(request, "login.html", error="Неверный логин или пароль.", username=username.strip())
+
+    request.session.clear()
+    request.session["user_id"] = user["id"]
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
 
 
 @app.post("/video")
 async def video_info(request: Request, url: str = Form(...)):
+    user = require_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
     url = url.strip()
     if not url:
         return page(request, error="Введите ссылку на YouTube.")
-
     try:
         video = await asyncio.to_thread(get_video_info, url)
     except Exception as error:
         return page(request, error=str(error), url=url)
-
     if not video["qualities"]:
-        return page(
-            request,
-            error="Для этого видео не удалось определить доступные качества.",
-            url=url,
-        )
-
+        return page(request, error="Для этого видео не удалось определить доступные качества.", url=url)
     return page(request, video=video, url=url)
 
 
 @app.post("/download")
-async def start_download(
-    request: Request,
-    url: str = Form(...),
-    format_id: str = Form(...),
-):
+async def start_download(request: Request, url: str = Form(...), format_id: str = Form(...)):
+    user = require_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    url = url.strip()
     try:
-        video = await asyncio.to_thread(get_video_info, url)
-        selected_format = next(
-            (
-                item for item in video["qualities"]
-                if str(item["format_id"]) == format_id
-            ),
-            None,
-        )
-        if selected_format is None:
-            return page(request, error="Выбранное качество недоступно.", url=url)
-
-        task_id = str(uuid.uuid4())
-        save_task(
-            task_id,
-            status="starting",
-            progress=0,
-            title=video["title"],
-            height=selected_format["height"],
-            format_id=format_id,
-            url=url,
-            video=json.dumps(video),
-        )
-        asyncio.create_task(
-            run_download(task_id, url, selected_format["height"], format_id)
-        )
+        task_id = await create_download_task(user["id"], url, format_id)
     except Exception as error:
         return page(request, error=str(error), url=url)
-
     return RedirectResponse(url=f"/download/{task_id}", status_code=303)
 
 
 @app.get("/download/{task_id}")
 async def download_page(request: Request, task_id: str):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
     task = redis_client.hgetall(task_key(task_id))
-    if not task:
+    if not task or task.get("user_id") != str(user["id"]):
         raise HTTPException(status_code=404, detail="Задача не найдена")
-
     video_json = task.get("video")
     video = json.loads(video_json) if video_json else None
     return page(
@@ -129,20 +336,32 @@ async def download_page(request: Request, task_id: str):
     )
 
 
-async def run_download(task_id: str, url: str, height: int, format_id: str):
+async def run_download(task_id: str, user_id: int, url: str, video: dict, height: int, format_id: str):
     try:
         save_task(task_id, status="downloading", progress=0)
 
         def progress_callback(data):
             save_task(task_id, **data)
 
-        result = await asyncio.to_thread(
-            download_video,
-            url,
-            height,
-            format_id,
-            progress_callback,
-        )
+        result = await asyncio.to_thread(download_video, url, height, format_id, progress_callback)
+        with get_db() as db:
+            db.execute(
+                """INSERT INTO download_history
+                (user_id, video_id, title, url, thumbnail, uploader, quality, format_id, filename, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    result.get("id") or video.get("id"),
+                    result.get("title") or video.get("title") or "YouTube video",
+                    url,
+                    video.get("thumbnail"),
+                    video.get("uploader"),
+                    int(result.get("height") or height),
+                    format_id,
+                    result.get("filename"),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
         save_task(
             task_id,
             status="completed",
@@ -156,22 +375,77 @@ async def run_download(task_id: str, url: str, height: int, format_id: str):
 
 
 @app.get("/api/download-status/{task_id}")
-async def download_status(task_id: str):
-    task = redis_client.hgetall(task_key(task_id))
-    if not task:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    return task
+async def download_status(request: Request, task_id: str):
+    return owned_task(request, task_id)
 
 
 @app.get("/download/file/{task_id}")
-async def download_file(task_id: str):
-    task = redis_client.hgetall(task_key(task_id))
+async def download_file(request: Request, task_id: str):
+    task = owned_task(request, task_id)
     filename = task.get("filename")
     if task.get("status") != "completed" or not filename:
         raise HTTPException(status_code=404, detail="Файл ещё не готов")
-
-    file_path = os.path.join(DOWNLOAD_DIR, filename)
+    file_path = os.path.join(DOWNLOAD_DIR, os.path.basename(filename))
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Готовый файл не найден")
-
     return FileResponse(path=file_path, filename=filename, media_type="video/mp4")
+
+
+@app.get("/history")
+async def history_page(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT id, video_id, title, url, thumbnail, uploader, quality,
+                      format_id, filename, created_at
+               FROM download_history WHERE user_id = ?
+               ORDER BY created_at DESC, id DESC""",
+            (user["id"],),
+        ).fetchall()
+    return page(request, "history.html", history=[dict(row) for row in rows])
+
+
+@app.post("/history/{entry_id}/delete")
+async def delete_history_entry(request: Request, entry_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    with get_db() as db:
+        db.execute("DELETE FROM download_history WHERE id = ? AND user_id = ?", (entry_id, user["id"]))
+    return RedirectResponse(url="/history", status_code=303)
+
+
+@app.post("/history/{entry_id}/download")
+async def redownload_history_entry(request: Request, entry_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    with get_db() as db:
+        row = db.execute(
+            "SELECT url, quality FROM download_history WHERE id = ? AND user_id = ?",
+            (entry_id, user["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Запись истории не найдена")
+    try:
+        video = await asyncio.to_thread(get_video_info, row["url"])
+        matching_quality = next(
+            (item for item in video["qualities"] if int(item["height"]) == int(row["quality"])),
+            None,
+        )
+        if not matching_quality:
+            raise ValueError(f"Качество {row['quality']}p больше недоступно для этого видео.")
+        task_id = await create_download_task(user["id"], row["url"], str(matching_quality["format_id"]), video=video)
+    except Exception as error:
+        with get_db() as db:
+            rows = db.execute(
+                """SELECT id, video_id, title, url, thumbnail, uploader, quality,
+                          format_id, filename, created_at
+                   FROM download_history WHERE user_id = ?
+                   ORDER BY created_at DESC, id DESC""",
+                (user["id"],),
+            ).fetchall()
+        return page(request, "history.html", history=[dict(item) for item in rows], error=str(error))
+    return RedirectResponse(url=f"/download/{task_id}", status_code=303)

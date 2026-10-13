@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 downloads/
 .DS_Store
+media_downloader.db
+media_downloader.db-shm
+media_downloader.db-wal
+.secret_key

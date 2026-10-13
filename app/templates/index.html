@@ -3,16 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Downloader</title>
+    <title>Media Downloader</title>
     <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/auth.css') }}">
 </head>
 <body>
     <div class="app">
         <header class="header">
             <div class="logo">
                 <div class="logo-icon">↓</div>
-                <h1>YouTube Downloader</h1>
+                <h1>Media Downloader</h1>
             </div>
+            <nav class="account-nav">
+                {% if current_user %}
+                <span>Привет, <strong>{{ current_user.username }}</strong></span>
+                <a href="/history">История</a>
+                <form action="/logout" method="post"><button type="submit" class="text-button">Выйти</button></form>
+                {% endif %}
+            </nav>
         </header>
 
         <main class="main">

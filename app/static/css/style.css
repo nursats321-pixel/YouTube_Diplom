@@ -39,7 +39,43 @@ min-height: 100vh;
 width: min(1080px, 92%);
 margin: 0 auto;
 padding: 30px 0 20px;
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 20px;
 }
+
+.account-nav {
+display: flex;
+align-items: center;
+justify-content: flex-end;
+flex-wrap: wrap;
+gap: 8px;
+color: #b9bbc2;
+font-size: 14px;
+}
+
+.account-nav > span,
+.account-nav > a,
+.account-nav .text-button {
+min-height: 40px;
+display: inline-flex;
+align-items: center;
+justify-content: center;
+padding: 0 14px;
+border: 1px solid var(--border);
+border-radius: 999px;
+background: rgba(255, 255, 255, .045);
+color: #e7e8eb;
+text-decoration: none;
+}
+
+.account-nav > span { color: #a7aab2; }
+.account-nav > span strong { color: #fff; margin-left: 4px; }
+.account-nav a:hover,
+.account-nav .text-button:hover { background: rgba(255, 255, 255, .10); }
+.account-nav form { margin: 0; }
+.account-nav .text-button { font: inherit; cursor: pointer; }
 
 .logo {
 display: flex;
@@ -633,6 +669,9 @@ text-align: center;
 .main {
     width: 94%;
 }
+
+.header { align-items: flex-start; flex-direction: column; gap: 16px; }
+.account-nav { justify-content: flex-start; }
 
 .hero h2 {
     font-size: 35px;

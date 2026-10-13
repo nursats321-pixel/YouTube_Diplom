@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход — Media Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/auth.css') }}">
+</head>
+<body class="auth-page">
+    <main class="auth-card">
+        <a class="auth-brand" href="/">↓ Media Downloader</a>
+        <h1>Вход в аккаунт</h1>
+        <p class="auth-subtitle">Войди, чтобы скачивать видео и сохранять историю.</p>
+        {% if error %}<div class="auth-error">{{ error }}</div>{% endif %}
+        <form action="/login" method="post" class="auth-form">
+            <label for="username">Логин</label>
+            <input id="username" name="username" value="{{ username or '' }}" autocomplete="username" required minlength="3" maxlength="32">
+            <label for="password">Пароль</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button type="submit" class="auth-submit">Войти</button>
+        </form>
+        <p class="auth-switch">Ещё нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+    </main>
+</body>
+</html>

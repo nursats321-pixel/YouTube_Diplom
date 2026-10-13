@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>История — Media Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/auth.css') }}">
+</head>
+<body class="history-page">
+    <div class="history-shell">
+        <header class="history-header">
+            <a class="auth-brand" href="/">↓ Media Downloader</a>
+            <nav class="account-nav">
+                <span>Аккаунт: <strong>{{ current_user.username }}</strong></span>
+                <a href="/">Скачать видео</a>
+                <form action="/logout" method="post"><button type="submit" class="text-button">Выйти</button></form>
+            </nav>
+        </header>
+        <main class="history-main">
+            <h1>История скачиваний</h1>
+            <p class="auth-subtitle">Здесь собраны завершённые загрузки твоего аккаунта.</p>
+            {% if error %}<div class="auth-error">{{ error }}</div>{% endif %}
+            {% if history %}
+            <section class="history-list">
+                {% for item in history %}
+                <article class="history-item">
+                    <div class="history-thumbnail">
+                        {% if item.thumbnail %}<img src="{{ item.thumbnail }}" alt="Превью: {{ item.title }}" loading="lazy">{% else %}<div class="thumbnail-placeholder">▶</div>{% endif %}
+                    </div>
+                    <div class="history-details">
+                        <h2>{{ item.title }}</h2>
+                        <p>{% if item.uploader %}{{ item.uploader }} · {% endif %}{{ item.quality }}p</p>
+                        <time datetime="{{ item.created_at }}">{{ item.created_at[:19].replace('T', ' ') }} UTC</time>
+                        <div class="history-actions">
+                            <form action="/history/{{ item.id }}/download" method="post"><button type="submit" class="auth-submit small-button">Скачать снова</button></form>
+                            <form action="/history/{{ item.id }}/delete" method="post" onsubmit="return confirm('Удалить запись из истории?');"><button type="submit" class="delete-button">Удалить из истории</button></form>
+                        </div>
+                    </div>
+                </article>
+                {% endfor %}
+            </section>
+            {% else %}
+            <div class="history-empty">
+                <h2>История пока пуста</h2>
+                <p>Скачай первое видео, и оно появится здесь.</p>
+                <a class="auth-submit link-button" href="/">Перейти к скачиванию</a>
+            </div>
+            {% endif %}
+        </main>
+    </div>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Регистрация — Media Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/auth.css') }}">
+</head>
+<body class="auth-page">
+    <main class="auth-card">
+        <a class="auth-brand" href="/">↓ Media Downloader</a>
+        <h1>Создать аккаунт</h1>
+        <p class="auth-subtitle">Логин от 3 до 32 символов, пароль — минимум 8 символов.</p>
+        {% if error %}<div class="auth-error">{{ error }}</div>{% endif %}
+        <form action="/register" method="post" class="auth-form">
+            <label for="username">Логин</label>
+            <input id="username" name="username" value="{{ username or '' }}" autocomplete="username" required minlength="3" maxlength="32">
+            <label for="password">Пароль</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+            <label for="password_confirm">Повтори пароль</label>
+            <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required minlength="8">
+            <button type="submit" class="auth-submit">Зарегистрироваться</button>
+        </form>
+        <p class="auth-switch">Уже есть аккаунт? <a href="/login">Войти</a></p>
+    </main>
+</body>
+</html>
