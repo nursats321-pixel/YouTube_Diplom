@@ -35,8 +35,6 @@ def get_video_info(url: str):
     with yt_dlp.YoutubeDL(ydl_options()) as ydl:
         info = ydl.extract_info(url, download=False)
 
-    # Offer every available resolution, including VP9/AV1 and video-only
-    # streams. yt-dlp will pair the chosen resolution with the best audio.
     by_height = {}
     for fmt in _video_formats(info):
         height = int(fmt["height"])
@@ -109,8 +107,6 @@ def download_video(url: str, height: int, format_id=None, progress_callback=None
 
     options = ydl_options()
     options.update({
-        # Prefer MP4/H.264 where available, with yt-dlp selecting a fresh
-        # matching stream instead of reusing an expiring format URL/itag.
         "format": (
             f"bestvideo[height={int(height)}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
             f"bestvideo[height={int(height)}]+bestaudio/"

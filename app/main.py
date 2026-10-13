@@ -26,7 +26,7 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "media_downloader.db")
 SECRET_PATH = BASE_DIR / ".secret_key"
 TASK_TTL_SECONDS = 60 * 60
 
-# Keep a stable random session key for local development; deployments should set SECRET_KEY.
+
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     if SECRET_PATH.exists():
