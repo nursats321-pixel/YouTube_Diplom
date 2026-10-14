@@ -1,4 +1,7 @@
 import os
+import shutil
+import tempfile
+from contextlib import contextmanager
 
 import yt_dlp
 
@@ -23,6 +26,32 @@ def ydl_options():
     return options
 
 
+@contextmanager
+def youtube_dl(options=None):
+    """Run yt-dlp with a writable copy of Render's read-only secret file."""
+    ydl_opts = ydl_options()
+    if options:
+        ydl_opts.update(options)
+
+    cookie_path = ydl_opts.get("cookiefile")
+    temporary_cookie_path = None
+    try:
+        if cookie_path and os.path.isfile(cookie_path):
+            fd, temporary_cookie_path = tempfile.mkstemp(prefix="youtube-cookies-", suffix=".txt")
+            os.close(fd)
+            shutil.copyfile(cookie_path, temporary_cookie_path)
+            ydl_opts["cookiefile"] = temporary_cookie_path
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            yield ydl
+    finally:
+        if temporary_cookie_path:
+            try:
+                os.remove(temporary_cookie_path)
+            except FileNotFoundError:
+                pass
+
+
 def _video_formats(info):
     formats = []
     for fmt in info.get("formats", []):
@@ -36,7 +65,7 @@ def _video_formats(info):
 
 
 def get_video_info(url: str):
-    with yt_dlp.YoutubeDL(ydl_options()) as ydl:
+    with youtube_dl() as ydl:
         info = ydl.extract_info(url, download=False)
 
     by_height = {}
@@ -73,7 +102,7 @@ def get_video_info(url: str):
 
 def download_video(url: str, height: int, format_id=None, progress_callback=None):
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    with yt_dlp.YoutubeDL(ydl_options()) as ydl:
+    with youtube_dl() as ydl:
         info = ydl.extract_info(url, download=False)
 
     video_id = info.get("id")
@@ -122,7 +151,7 @@ def download_video(url: str, height: int, format_id=None, progress_callback=None
         "overwrites": True,
         "progress_hooks": [progress_hook],
     })
-    with yt_dlp.YoutubeDL(options) as ydl:
+    with youtube_dl(options) as ydl:
         ydl.extract_info(url, download=True)
 
     if not os.path.exists(output_path):
