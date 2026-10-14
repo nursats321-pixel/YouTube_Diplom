@@ -24,7 +24,7 @@ def ydl_options():
             # generates them automatically using the Deno runtime in Docker.
             "youtube": {"player_client": ["mweb", "web_safari"]},
             "youtubepot-bgutilscript": {
-                "server_home": "/opt/bgutil-ytdlp-pot-provider/server",
+                "server_home": ["/opt/bgutil-ytdlp-pot-provider/server"],
             },
         },
     }
