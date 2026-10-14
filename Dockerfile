@@ -4,10 +4,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl git \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && deno --version \
     && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp's optional PO Token provider can help YouTube recognize downloads
+# coming from a hosted server such as Render.
+RUN git clone --depth 1 --branch 2.0.2 \
+      https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
+      /opt/bgutil-ytdlp-pot-provider \
+    && cd /opt/bgutil-ytdlp-pot-provider/server \
+    && deno install --allow-scripts=npm:canvas --frozen
 
 WORKDIR /app
 COPY requirements.txt ./

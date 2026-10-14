@@ -19,6 +19,14 @@ def ydl_options():
         "fragment_retries": 10,
         "extractor_retries": 3,
         "file_access_retries": 3,
+        "extractor_args": {
+            # YouTube now requires PO tokens for some formats. This provider
+            # generates them automatically using the Deno runtime in Docker.
+            "youtube": {"player_client": ["mweb", "web_safari"]},
+            "youtubepot-bgutilscript": {
+                "server_home": "/opt/bgutil-ytdlp-pot-provider/server",
+            },
+        },
     }
     cookies_file = os.getenv("YOUTUBE_COOKIES_FILE", "/etc/secrets/youtube-cookies.txt")
     if os.path.isfile(cookies_file):
