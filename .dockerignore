@@ -6,3 +6,4 @@ downloads
 media_downloader.db*
 .secret_key
 .env
+youtube-cookies.txt

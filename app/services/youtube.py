@@ -8,7 +8,7 @@ DOWNLOAD_DIR = "downloads"
 
 def ydl_options():
     """Use yt-dlp's maintained YouTube clients and format selection logic."""
-    return {
+    options = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -17,6 +17,10 @@ def ydl_options():
         "extractor_retries": 3,
         "file_access_retries": 3,
     }
+    cookies_file = os.getenv("YOUTUBE_COOKIES_FILE", "/etc/secrets/youtube-cookies.txt")
+    if os.path.isfile(cookies_file):
+        options["cookiefile"] = cookies_file
+    return options
 
 
 def _video_formats(info):

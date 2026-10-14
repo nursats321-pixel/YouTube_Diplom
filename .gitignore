@@ -8,3 +8,4 @@ media_downloader.db-shm
 media_downloader.db-wal
 .secret_key
 .env
+youtube-cookies.txt
